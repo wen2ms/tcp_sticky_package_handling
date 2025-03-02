@@ -1,0 +1,372 @@
+#ifndef SOCKET_H
+#define SOCKET_H
+
+#include <arpa/inet.h>
+
+// Server
+int set_listen(int listening_file_descriptor, unsigned short port);
+int accept_connection(int listening_file_descriptor, struct sockaddr_in* addr);
+
+// Client
+int connect_to_host(int file_descriptor, const char* ip, unsigned short port);
+
+// Shared
+int create_socket();
+int send_message(int file_descriptor, const char* message, int length);
+int receive_message(int file_descriptor, char* message, int size);
+int close_socket(int file_descriptor);
+
+#endif  // SOCKET_H
+
+#include "socket.h"
+
+#include <arpa/inet.h>
+#include <stdio.h>
+#include <unistd.h>
+
+int create_socket() {
+    int file_descriptor = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (file_descriptor == -1) {
+        perror("socket");
+        return -1;
+    }
+
+    printf("socket created successfully! file_descriptor=%d\n", file_descriptor);
+
+    return file_descriptor;
+}
+
+int set_listen(int listening_file_descriptor, unsigned short port) {
+    struct sockaddr_in server_address;
+
+    server_address.sin_family = AF_INET;
+    server_address.sin_port = htons(port);
+    server_address.sin_addr.s_addr = INADDR_ANY;
+
+    int ret = bind(listening_file_descriptor, (struct sockaddr*)&server_address, sizeof(server_address));
+
+    if (ret == -1) {
+        perror("bind");
+        return -1;
+    }
+    printf("socket binded successfully!\n");
+
+    ret = listen(listening_file_descriptor, 128);
+
+    if (ret == -1) {
+        perror("listen");
+        return -1;
+    }
+    printf("setting listen successfully!\n");
+
+    return ret;
+}
+
+int accept_connection(int listening_file_descriptor, struct sockaddr_in* addr) {
+    int client_file_descriptor = -1;
+
+    if (addr == NULL) {
+        client_file_descriptor = accept(listening_file_descriptor, NULL, NULL);
+    } else {
+        unsigned int client_address_len = sizeof(struct sockaddr_in);
+
+        client_file_descriptor = accept(listening_file_descriptor, (struct sockaddr*)addr, &client_address_len);
+    }
+
+    if (client_file_descriptor == -1) {
+        perror("accept");
+        return -1;
+    }
+
+    printf("connected to client successfully...\n");
+
+    return client_file_descriptor;
+}
+
+int receive_message(int file_descriptor, char* message, int size) {
+    int receive_data_len = recv(file_descriptor, message, size, 0);
+
+    if (receive_data_len == 0) {
+        printf("the other side disconnected...\n");
+        close(file_descriptor);
+    } else if (receive_data_len == -1) {
+        perror("recv");
+        close(file_descriptor);
+    }
+
+    return receive_data_len;
+}
+
+int send_message(int file_descriptor, const char* message, int length) {
+    int send_data_len = send(file_descriptor, message, length, 0);
+
+    if (send_data_len == -1) {
+        perror("send");
+        close(file_descriptor);
+    }
+
+    return send_data_len;
+}
+
+int connect_to_host(int file_descriptor, const char* ip, unsigned short port) {
+    struct sockaddr_in server_address;
+
+    server_address.sin_family = AF_INET;
+    server_address.sin_port = htons(port);
+
+    inet_pton(AF_INET, ip, &server_address.sin_addr.s_addr);
+
+    int ret = connect(file_descriptor, (struct sockaddr*)&server_address, sizeof(server_address));
+
+    if (ret == -1) {
+        perror("connect");
+        return -1;
+    }
+
+    printf("connected to server successfully...\n");
+    return ret;
+}
+
+int close_socket(int file_descriptor) {
+    int ret = close(file_descriptor);
+
+    if (ret == -1) {
+        perror("close");
+    }
+
+    return ret;
+}
+
+#include <arpa/inet.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <pthread.h>
+
+#include "socket.h"
+
+struct SocketInfo {
+    struct sockaddr_in client_address;
+    int client_file_descriptor;
+};
+
+struct SocketInfo socket_infos[512];
+
+void* worker(void* arg) {
+    printf("worker id=%p...\n", pthread_self());
+
+    struct SocketInfo* p_info = (struct SocketInfo*)arg;
+
+    char ip[32];
+    printf("Client IP: %s, Port: %d\n", inet_ntop(AF_INET, &p_info->client_address.sin_addr.s_addr, ip, sizeof(ip)),
+           ntohs(p_info->client_address.sin_port));
+
+    while (1) {
+        char buffer[4096];
+
+        printf("receiving messages...\n");
+
+        int receive_data_len = receive_message(p_info->client_file_descriptor, buffer, sizeof(buffer));
+
+        if (receive_data_len > 0) {
+            printf("%s\n\n\n\n", buffer);
+        } else {
+            break;
+        }
+
+        sleep(1);
+    }
+
+    // close_socket(p_info->client_file_descriptor);
+    p_info->client_file_descriptor = -1;
+
+    return NULL;
+}
+
+int main() {
+    int server_file_descriptor = create_socket();
+
+    if (server_file_descriptor == -1) {
+        return -1;
+    }
+
+    int ret = set_listen(server_file_descriptor, 9999);
+
+    if (ret == -1) {
+        return -1;
+    }
+
+    int socket_infos_max = sizeof(socket_infos) / sizeof(socket_infos[0]);
+
+    for (int i = 0; i <socket_infos_max; ++i) {
+        bzero(&socket_infos[i], sizeof(socket_infos[i]));
+
+        socket_infos[i].client_file_descriptor = -1;
+    }
+
+    while (1) {
+        struct SocketInfo* p_info;
+
+        for (int i = 0; i < socket_infos_max; ++i) {
+            if (socket_infos[i].client_file_descriptor == -1) {
+                p_info = &socket_infos[i];
+                break;
+            }
+        }
+
+        p_info->client_file_descriptor = accept_connection(server_file_descriptor, &p_info->client_address);
+
+        pthread_t tid;
+
+        pthread_create(&tid, NULL, worker, p_info);
+        
+        pthread_detach(tid);
+    }
+
+    close_socket(server_file_descriptor);
+
+    return 0;
+}
+
+#include <stdio.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <string.h>
+#include <fcntl.h>
+
+#include "socket.h"
+
+int main() {
+    int client_file_descriptor = create_socket();
+
+    if (client_file_descriptor == -1) {
+        return -1;
+    }
+
+    int ret = connect_to_host(client_file_descriptor, "127.0.0.1", 9999);
+
+    if (ret == -1) {
+        return -1;
+    }
+
+    int file = open("socket.c", O_RDONLY);
+    int file_length = 0;
+    char buffer[100];
+
+    while (1) {
+        file_length = read(file, buffer, sizeof(buffer));
+
+        if (file_length <= 0) {
+            break;
+        }
+
+        send_message(client_file_descriptor, buffer, file_length);
+
+        memset(buffer, 0, sizeof(buffer));
+
+        usleep(300);
+    }
+
+    sleep(10);
+
+    close_socket(client_file_descriptor);
+    close(file);
+
+    return 0;
+}
+
+# Created by https://www.toptal.com/developers/gitignore/api/macos,c
+# Edit at https://www.toptal.com/developers/gitignore?templates=macos,c
+
+### C ###
+# Prerequisites
+*.d
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Kernel Module Compile Results
+*.mod*
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf
+
+### macOS ###
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon must end with two \r
+Icon
+
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+### macOS Patch ###
+# iCloud generated files
+*.icloud
+
+# End of https://www.toptal.com/developers/gitignore/api/macos,c
+
+# vscode
+.vscode
