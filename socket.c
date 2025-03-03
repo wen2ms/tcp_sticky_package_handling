@@ -66,26 +66,61 @@ int accept_connection(int listening_file_descriptor, struct sockaddr_in* addr) {
     return client_file_descriptor;
 }
 
-int receive_message(int file_descriptor, char* message, int size) {
-    int receive_data_len = recv(file_descriptor, message, size, 0);
+int read_fixed_size(int file_descriptor, char* message, int size) {
+    char* buffer = message;
+    int read_count = size;
 
-    if (receive_data_len == 0) {
-        printf("client disconnected...\n");
-        close(file_descriptor);
-    } else if (receive_data_len == -1) {
-        perror("recv");
-        close(file_descriptor);
+    while (read_count > 0) {
+        int read_length = recv(file_descriptor, buffer, read_count, 0);
+
+        if (read_length == -1) {
+            return -1;
+        } else if (read_length == 0) {
+            return size - read_count;
+        }
+
+        buffer += read_length;
+        read_count -= read_length;
     }
 
-    return receive_data_len;
+    return size;
+}
+
+int receive_message(int file_descriptor, char** message) {
+    if (file_descriptor < 0 || message == NULL) {
+        return -1;
+    }
+
+    int receive_data_len = 0;
+    read_fixed_size(file_descriptor, (char*)&receive_data_len, 4);
+
+    receive_data_len = ntohl(receive_data_len);
+    printf("receiving data length: %d\n", receive_data_len);
+
+    char* data = (char*)malloc(receive_data_len + 1);
+    int actual_receive_data_len = read_fixed_size(file_descriptor, data, receive_data_len);
+
+    if (actual_receive_data_len != receive_data_len) {
+        printf("receiving file failed...\n");
+
+        close(file_descriptor);
+        free(data);
+
+        return -1;
+    }
+
+    data[receive_data_len] = '\0';
+    *message = data;
+
+    return actual_receive_data_len;
 }
 
 int write_fixed_size(int file_descriptor, const char* message, int size) {
-    char* buffer = message;
+    const char* buffer = message;
     int unsend_count = size;
 
     while (unsend_count > 0) {
-        int sent_length = send(file_descriptor, buffer, unsend_count);
+        int sent_length = send(file_descriptor, buffer, unsend_count, 0);
 
         if (sent_length == -1) {
             return -1;
@@ -113,7 +148,9 @@ int send_message(int file_descriptor, const char* message, int length) {
     memcpy(data_package + 4, message, length);
 
 
-    int send_data_len = write_fixed_size(file_descriptor, message, length + 4);
+    int send_data_len = write_fixed_size(file_descriptor, data_package, length + 4);
+
+    free(data_package);
 
     if (send_data_len == -1) {
         close(file_descriptor);

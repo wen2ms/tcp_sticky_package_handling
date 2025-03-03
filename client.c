@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <string.h>
@@ -21,10 +22,10 @@ int main() {
 
     int file = open("sendfile.txt", O_RDONLY);
     int file_length = 0;
-    char buffer[100];
+    char buffer[1000];
 
     while (1) {
-        file_length = read(file, buffer, sizeof(buffer));
+        file_length = read(file, buffer, rand() % 1000);
 
         if (file_length <= 0) {
             break;

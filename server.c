@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
 #include <pthread.h>
@@ -23,16 +24,16 @@ void* worker(void* arg) {
            ntohs(p_info->client_address.sin_port));
 
     while (1) {
-        char buffer[4096];
+        char* buffer;
 
-        printf("receiving messages...\n");
+        int receive_data_len = receive_message(p_info->client_file_descriptor, &buffer);
 
-        memset(buffer, 0, sizeof(buffer));
-
-        int receive_data_len = receive_message(p_info->client_file_descriptor, buffer, sizeof(buffer));
+        printf("receiving data: %d ......\n", receive_data_len);
 
         if (receive_data_len > 0) {
             printf("%s\n\n\n\n", buffer);
+
+            free(buffer);
         } else {
             break;
         }
