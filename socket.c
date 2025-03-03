@@ -2,6 +2,8 @@
 
 #include <arpa/inet.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 int create_socket() {
@@ -78,11 +80,42 @@ int receive_message(int file_descriptor, char* message, int size) {
     return receive_data_len;
 }
 
+int write_fixed_size(int file_descriptor, const char* message, int size) {
+    char* buffer = message;
+    int unsend_count = size;
+
+    while (unsend_count > 0) {
+        int sent_length = send(file_descriptor, buffer, unsend_count);
+
+        if (sent_length == -1) {
+            return -1;
+        } else if (sent_length == 0) {
+            continue;
+        }
+
+        buffer += sent_length;
+        unsend_count -= sent_length;
+    }
+
+    return size;
+}
+
 int send_message(int file_descriptor, const char* message, int length) {
-    int send_data_len = send(file_descriptor, message, length, 0);
+    if (file_descriptor < 0 || message == NULL || length <= 0) {
+        return -1;
+    }
+
+    char* data_package = (char*)malloc(length + 4);
+
+    int big_endian_length = htonl(length);
+
+    memcpy(data_package, &big_endian_length, 4);
+    memcpy(data_package + 4, message, length);
+
+
+    int send_data_len = write_fixed_size(file_descriptor, message, length + 4);
 
     if (send_data_len == -1) {
-        perror("send");
         close(file_descriptor);
     }
 
